@@ -1,0 +1,3 @@
+[submodule "cstone"]
+	path = cstone
+	url = git@github.com:sekelle/cornerstone-octree.git
