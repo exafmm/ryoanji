@@ -101,7 +101,7 @@ int main(int argc, char** argv)
 
     auto   t1    = std::chrono::high_resolution_clock::now();
     double dt    = std::chrono::duration<double>(t1 - t0).count();
-    double flops = (interactions[0] * 20 + interactions[2] * 2 * pow(P, 3)) * numBodies / dt / 1e12;
+    double flops = (interactions[0] * 23. + interactions[2] * 2 * pow(P, 3)) * numBodies / dt / 1e12;
 
     fprintf(stdout, "--- Total runtime ----------------\n");
     fprintf(stdout, "Total BH            : %.7f s (%.7f TFlops)\n", dt, flops);
@@ -117,7 +117,7 @@ int main(int argc, char** argv)
     t1 = std::chrono::high_resolution_clock::now();
     dt = std::chrono::duration<double>(t1 - t0).count();
 
-    flops = 24. * numBodies * numBodies / dt / 1e12;
+    flops = 23. * numBodies * numBodies / dt / 1e12;
     fprintf(stdout, "Total Direct         : %.7f s (%.7f TFlops)\n", dt, flops);
 
     thrust::host_vector<T> h_p  = d_p;

@@ -8,12 +8,34 @@ if (CMAKE_HIP_COMPILER)
     set_source_files_properties(demo.cu PROPERTIES LANGUAGE HIP)
 endif()
 
+# single-rank demonstrator
 if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
     add_executable(ryoanji_demo demo.cu)
     target_link_libraries(ryoanji_demo PUBLIC cstone_tree)
     set_target_properties(ryoanji_demo PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
     # set_source_files_properties(demo.cu PROPERTIES COMPILE_FLAGS "-Xptxas -v")
     install(TARGETS ryoanji_demo RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}/ryoanji/ryoanji_demo)
+endif ()
+
+# multi-rank demonstrator
+if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
+    set(testname ryoanji_demo_mpi)
+    add_executable(${testname} demo_mpi.cpp)
+    target_include_directories(${testname} PRIVATE ${RYOANJI_TEST_INCLUDE_DIRS})
+
+    target_link_libraries(${testname} PRIVATE cstone_gpu ryoanji)
+
+    if (CMAKE_HIP_COMPILER)
+        target_link_libraries(${testname} PRIVATE hip::host)
+        target_compile_definitions(${testname} PRIVATE THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_HIP)
+    endif ()
+
+    if (CMAKE_CUDA_COMPILER)
+        target_link_libraries(${testname} PRIVATE CUDA::cudart)
+    endif ()
+    target_compile_options(${testname} PRIVATE -Wno-unknown-pragmas)
+    install(TARGETS ${testname} RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}/ryoanji/)
+    unset(testname)
 endif ()
 
 # CPU unit test suite

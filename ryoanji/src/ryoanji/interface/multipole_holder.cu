@@ -50,7 +50,7 @@ public:
 
     void upsweep(const Tc* x, const Tc* y, const Tc* z, const Tm* m, const cstone::Octree<KeyType>& globalOctree,
                  const cstone::FocusedOctree<KeyType, Tf, cstone::GpuTag>& focusTree, const cstone::LocalIndex* layout,
-                 MType* multipoles)
+                 MType* multipolesHost)
     {
         constexpr int numThreads = UpsweepConfig::numThreads;
         octree_                  = focusTree.octreeViewAcc();
@@ -69,7 +69,7 @@ public:
         std::vector<TreeNodeIndex> levelRange(cstone::maxTreeLevel<KeyType>{} + 2);
         memcpyD2H(octree_.levelRange, levelRange.size(), levelRange.data());
 
-        //! first upsweep with local data, start at lowest possible level - 1, lowest level can only be leaves
+        //! first upsweep with local data on device
         int numLevels = cstone::maxTreeLevel<KeyType>{};
         for (int level = numLevels - 1; level >= 0; level--)
         {
@@ -82,20 +82,19 @@ public:
             }
         }
 
-        memcpyD2H(rawPtr(multipoles_), multipoles_.size(), multipoles);
+        memcpyD2H(rawPtr(multipoles_), multipoles_.size(), multipolesHost);
 
         auto ryUpsweep = [](auto levelRange, auto childOffsets, auto M, auto centers)
         { upsweepMultipoles(levelRange, childOffsets.data(), centers, M); };
 
-        gsl::span multipoleSpan{multipoles, size_t(octree_.numNodes)};
+        gsl::span multipoleSpan{multipolesHost, size_t(octree_.numNodes)};
         cstone::globalFocusExchange(globalOctree, focusTree, multipoleSpan, ryUpsweep, globalCenters.data());
 
         focusTree.peerExchange(multipoleSpan, static_cast<int>(cstone::P2pTags::focusPeerCenters) + 1);
 
-        // H2D multipoles
-        memcpyH2D(multipoles, multipoles_.size(), rawPtr(multipoles_));
+        memcpyH2D(multipolesHost, multipoles_.size(), rawPtr(multipoles_));
 
-        //! second upsweep with leaf data from peer and global ranks in place
+        //! second upsweep on device with leaf data from peer and global ranks in place
         for (int level = numLevels - 1; level >= 0; level--)
         {
             int numCellsLevel = levelRange[level + 1] - levelRange[level];

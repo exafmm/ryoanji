@@ -47,13 +47,42 @@ public:
 
     ~MultipoleHolder();
 
+    /*! @brief Compute multipoles for given particles and octree, performs MPI communication
+     *
+     * @param[in]  x              particle x coordinates, on device
+     * @param[in]  y              particle y coordinates, on device
+     * @param[in]  z              particle z coordinates, on device
+     * @param[in]  m              particle masses, on device
+     * @param[in]  globalOctree   fully linked octree used for domain decomposition on CPU
+     * @param[in]  focusTree      fully linked octree focused on local domain (but still global) on device
+     * @param[in]  layout         index offsets per tree leaf cell into particle buffers, on device
+     * @param[out] multipoles     multipole temp storage, on CPU
+     *
+     * Particle buffers need to be SFC-sorted and indexed to match @p layout.
+     */
     void upsweep(const Tc* x, const Tc* y, const Tc* z, const Tm* m, const cstone::Octree<KeyType>& globalOctree,
                  const cstone::FocusedOctree<KeyType, Tf, cstone::GpuTag>& focusTree, const cstone::LocalIndex* layout,
                  MType* multipoles);
 
+    /*! @brief Compute gravitational accelerations for all particles in the range [firstBody:lastBody]
+     *
+     * @param[in] firstBody  first index in particles buffers to compute accelerations for
+     * @param[in] lastBody   last index (exclusive) in particles buffers to compute accelerations for
+     * @param[in] x         particle x coordinates, on device
+     * @param[in] y         particle y coordinates, on device
+     * @param[in] z         particle z coordinates, on device
+     * @param[in] m         particle masses
+     * @param[in] h         particle smoothing lengths, on device
+     * @param[in] G         gravitational constant
+     * @param[out] ax       output accelerations, on device
+     * @param[out] ay
+     * @param[out] az
+     * @return
+     */
     float compute(LocalIndex firstBody, LocalIndex lastBody, const Tc* x, const Tc* y, const Tc* z, const Tm* m,
                   const Th* h, Tc G, Ta* ax, Ta* ay, Ta* az);
 
+    //! @brief return a tuple with sumP2P, maxP2P, sumM2P, maxM2P from the last call to compute
     util::array<uint64_t, 4> readStats() const;
 
     const MType* deviceMultipoles() const;
