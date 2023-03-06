@@ -73,8 +73,8 @@ public:
         int numLevels = cstone::maxTreeLevel<KeyType>{};
         for (int level = numLevels - 1; level >= 0; level--)
         {
-            int numCellsLevel = levelRange[level + 1] - levelRange[level];
-            int numBlocks     = (numCellsLevel - 1) / numThreads + 1;
+            unsigned numCellsLevel = levelRange[level + 1] - levelRange[level];
+            unsigned numBlocks     = iceil(numCellsLevel, numThreads);
             if (numCellsLevel)
             {
                 upsweepMultipoles<<<numBlocks, numThreads>>>(levelRange[level], levelRange[level + 1],
@@ -104,6 +104,11 @@ public:
                 upsweepMultipoles<<<numBlocks, numThreads>>>(levelRange[level], levelRange[level + 1],
                                                              octree_.childOffsets, centers_, rawPtr(multipoles_));
             }
+        }
+
+        if (IsSpherical<MType>{})
+        {
+            normalize<<<iceil(octree_.numNodes, numThreads), numThreads>>>(octree_.numNodes, rawPtr(multipoles_));
         }
     }
 

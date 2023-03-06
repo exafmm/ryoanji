@@ -502,7 +502,7 @@ __global__ __launch_bounds__(TravConfig::numThreads) void traverse(
             const int bodyIdx = bodyIdxLane + i * GpuConfig::warpSize;
             if (bodyIdx < bodyEnd)
             {
-                if constexpr (std::is_same_v<P, Tc*>) { p[bodyIdx] += m[bodyIdx] * acc_i[i][0]; }
+                if constexpr (std::is_same_v<P, Tc*>) { p[bodyIdx] += G * m[bodyIdx] * acc_i[i][0]; }
                 ax[bodyIdx] += G * acc_i[i][1];
                 ay[bodyIdx] += G * acc_i[i][2];
                 az[bodyIdx] += G * acc_i[i][3];
@@ -575,7 +575,7 @@ auto computeAcceleration(size_t firstBody, size_t lastBody, const Tc* x, const T
     interactions[3] = Tc(maxM2P);
     interactions[4] = totalPotential;
 
-    Tc flops = (interactions[0] * 20.0 + interactions[2] * 2.0 * powf(ExpansionOrder<MType{}.size()>{}, 3)) *
+    Tc flops = (interactions[0] * 23.0 + interactions[2] * 2.0 * powf(ExpansionOrder<MType{}.size()>{}, 3)) *
                Tc(numBodies) / dt / 1e12;
 
     fprintf(stdout, "Traverse             : %.7f s (%.7f TFlops)\n", dt, flops);
