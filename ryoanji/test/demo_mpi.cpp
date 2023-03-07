@@ -65,8 +65,8 @@ void ryoanjiTest(int thisRank, int numRanks, size_t numParticlesGlobal)
     int seed = thisRank;
     cstone::RandomCoordinates<T, cstone::SfcKind<KeyType>> coords(numParticles, box, seed);
 
-    std::vector<T>         h(numParticles, hmean);
-    std::vector<float>     m(numParticles, 1.0f / float(numParticlesGlobal));
+    std::vector<T> h(numParticles, hmean);
+    std::vector<T> m(numParticles, 1.0f / float(numParticlesGlobal));
 
     cstone::Domain<KeyType, T, AccType> domain(thisRank, numRanks, bucketSizeGlobal, bucketSizeFocus, theta, box);
 
