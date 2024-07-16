@@ -31,10 +31,8 @@
 
 #pragma once
 
+#include <string_view>
 #include <vector>
-#include <variant>
-
-#include "cstone/util/type_list.hpp"
 
 namespace cstone
 {
@@ -64,7 +62,10 @@ std::vector<int> fieldStringsToInt(const std::vector<std::string>& subsetNames, 
     for (size_t i = 0; i < subsetNames.size(); ++i)
     {
         subsetIndices[i] = getFieldIndex(subsetNames[i], allNames);
-        if (subsetIndices[i] == allNames.size()) { throw std::runtime_error("Field not found: " + subsetNames[i]); }
+        if (size_t(subsetIndices[i]) == allNames.size())
+        {
+            throw std::runtime_error("Field not found: " + subsetNames[i]);
+        }
     }
     return subsetIndices;
 }

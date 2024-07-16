@@ -87,6 +87,15 @@ inline HOST_DEVICE_FUN int mergeCountAndMacOp(TreeNodeIndex nodeIdx,
     return 1; // default: do nothing
 }
 
+//! @brief refine nodes based on Mac only
+template<class KeyType>
+inline HOST_DEVICE_FUN int macRefineOp(KeyType nodeKey, char mac)
+{
+    unsigned level = decodePrefixLength(nodeKey) / 3;
+    if (level < maxTreeLevel<KeyType>{} && mac) { return 8; }
+    return 1;
+}
+
 /*! @brief Overrides a 0-value of nodeOps[nodeIdx] if @p nodeIdx is the left-most descendant of a non-zero ancestor
  *
  * @tparam KeyType
@@ -255,39 +264,6 @@ ResolutionStatus enforceKeys(gsl::span<const KeyType> mandatoryKeys,
         status = std::max(enforceKeySingle(key, nodeKeys, childOffsets, parents, nodeOps), status);
     }
     return status;
-}
-
-/*! @brief inject specified keys into a cornerstone leaf tree
- *
- * @tparam KeyType    32- or 64-bit unsigned integer
- * @param[inout] tree   cornerstone octree
- * @param[in]    keys   list of SFC keys to insert
- *
- * This function needs to insert more than just @p keys, due the cornerstone
- * invariant of consecutive nodes always having a power-of-8 difference.
- * This means that each subdividing a node, all 8 children always have to be added.
- */
-template<class KeyType, class Alloc>
-void injectKeys(std::vector<KeyType, Alloc>& tree, gsl::span<const KeyType> keys)
-{
-    std::vector<KeyType> spanningKeys(keys.begin(), keys.end());
-    spanningKeys.push_back(0);
-    spanningKeys.push_back(nodeRange<KeyType>(0));
-    std::sort(begin(spanningKeys), end(spanningKeys));
-    auto uit = std::unique(begin(spanningKeys), end(spanningKeys));
-    spanningKeys.erase(uit, end(spanningKeys));
-
-    // spanningTree is a list of all the missing nodes needed to resolve the mandatory keys
-    auto spanningTree = computeSpanningTree<KeyType>(spanningKeys);
-    tree.reserve(tree.size() + spanningTree.size());
-
-    // spanningTree is now inserted into newLeaves
-    std::copy(begin(spanningTree), end(spanningTree), std::back_inserter(tree));
-
-    // cleanup, restore invariants: sorted-ness, no-duplicates
-    std::sort(begin(tree), end(tree));
-    uit = std::unique(begin(tree), end(tree));
-    tree.erase(uit, end(tree));
 }
 
 } // namespace cstone

@@ -116,7 +116,10 @@ namespace aux_traits
 {
 template<class T>
 using MakeL2ArrayPtrs = util::array<T*, 2>;
-}
+
+template<class T>
+using PackType = std::conditional_t<sizeof(T) < sizeof(float), T, util::array<float, sizeof(T) / sizeof(float)>>;
+} // namespace aux_traits
 
 /*! @brief Compute multiple pointers such that the argument @p arrays can be mapped into a single buffer
  *
@@ -153,7 +156,7 @@ auto packBufferPtrs(char* packedBufferBase, size_t arraySize, Arrays... arrays)
 
     auto arrayByteOffsets = computeByteOffsets(arraySize, alignment, arrays...);
 
-    using Types     = util::TypeList<util::array<float, sizeof(std::decay_t<decltype(*arrays)>) / sizeof(float)>...>;
+    using Types     = util::TypeList<aux_traits::PackType<std::decay_t<decltype(*arrays)>>...>;
     using PtrTypes  = util::Map<aux_traits::MakeL2ArrayPtrs, Types>;
     using TupleType = util::Reduce<std::tuple, PtrTypes>;
 
@@ -161,7 +164,7 @@ auto packBufferPtrs(char* packedBufferBase, size_t arraySize, Arrays... arrays)
 
     auto packOneBuffer = [packedBufferBase, &data, &elementSizes, &arrayByteOffsets, &ret](auto index)
     {
-        using ElementType = util::array<float, elementSizes[index] / sizeof(float)>;
+        using ElementType = util::TypeListElement_t<index, Types>;
         auto* srcPtr      = reinterpret_cast<ElementType*>(data[index]);
         auto* packedPtr   = reinterpret_cast<ElementType*>(packedBufferBase + arrayByteOffsets[index]);
 
@@ -226,14 +229,6 @@ assignedEnvelope(BufferDescription bufDesc, LocalIndex numPresent, LocalIndex nu
 
     if (fitHead) { return {bufDesc.start - numIncoming, bufDesc.end}; }
     else { return {bufDesc.start, bufDesc.end + numIncoming}; }
-}
-
-template<class It>
-LocalIndex findInLog(It first, It last, int rank)
-{
-    auto it = std::find_if(first, last, [rank](auto e) { return std::get<0>(e) == rank; });
-    assert(it != last);
-    return std::get<1>(*it);
 }
 
 template<class Vector>

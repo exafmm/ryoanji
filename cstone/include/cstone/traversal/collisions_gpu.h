@@ -66,4 +66,14 @@ extern void findHalosGpu(const KeyType* prefixes,
                          TreeNodeIndex lastNode,
                          int* collisionFlags);
 
+template<class T, class KeyType>
+extern void markMacsGpu(const KeyType* prefixes,
+                        const TreeNodeIndex* childOffsets,
+                        const Vec4<T>* centers,
+                        const Box<T>& box,
+                        const KeyType* focusNodes,
+                        TreeNodeIndex numFocusNodes,
+                        bool limitSource,
+                        char* markings);
+
 } // namespace cstone
