@@ -48,11 +48,13 @@ add_executable(${testname}
         nbody/cartesian_qpole.cpp
         nbody/kernel.cpp
         nbody/traversal_cpu.cpp
+        nbody/ewald_cpu.cpp
         test_main.cpp)
 
 target_compile_options(${testname} PRIVATE -Wall -Wextra -Wno-unknown-pragmas)
 target_include_directories(${testname} PRIVATE ${RYOANJI_TEST_INCLUDE_DIRS})
 target_link_libraries(${testname} PRIVATE GTest::gtest_main OpenMP::OpenMP_CXX)
+target_link_libraries(${testname} PRIVATE GTest::gmock_main OpenMP::OpenMP_CXX)
 add_test(NAME ${testname} COMMAND ryoanji_cpu_unit_tests)
 install(TARGETS ${testname} RUNTIME DESTINATION ${CMAKE_INSTALL_SBINDIR}/ryoanji/cpu_unit_tests)
 
@@ -64,10 +66,11 @@ endif()
 if (CMAKE_CUDA_COMPILER OR CMAKE_HIP_COMPILER)
     set(testname ryoanji_unit_tests)
     add_executable(${testname}
+            nbody/ewald.cu
             nbody/direct.cu
             test_main.cpp)
     target_include_directories(${testname} PRIVATE ${PROJECT_SOURCE_DIR}/src)
-    target_link_libraries(${testname} PUBLIC OpenMP::OpenMP_CXX cstone_tree GTest::gtest_main)
+    target_link_libraries(${testname} PUBLIC OpenMP::OpenMP_CXX cstone_tree ryoanji GTest::gtest_main)
     if (CMAKE_HIP_COMPILER)
         set_target_properties(${testname} PROPERTIES LINKER_LANGUAGE CXX)
     endif ()
