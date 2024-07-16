@@ -68,41 +68,13 @@ void computeLeafSourceCenterGpu(const Tc* x,
     computeLeafSourceCenterKernel<<<numBlocks, numThreads>>>(x, y, z, m, leafToInternal, numLeaves, layout, centers);
 }
 
-template void computeLeafSourceCenterGpu(const double*,
-                                         const double*,
-                                         const double*,
-                                         const double*,
-                                         const TreeNodeIndex*,
-                                         TreeNodeIndex,
-                                         const LocalIndex*,
-                                         Vec4<double>*);
+#define COMPUTE_LEAF_SOURCE_CENTER_GPU(Tc, Tm, Tf)                                                                     \
+    template void computeLeafSourceCenterGpu(const Tc*, const Tc*, const Tc*, const Tm*, const TreeNodeIndex*,         \
+                                             TreeNodeIndex, const LocalIndex*, Vec4<Tf>*);
 
-template void computeLeafSourceCenterGpu(const double*,
-                                         const double*,
-                                         const double*,
-                                         const float*,
-                                         const TreeNodeIndex*,
-                                         TreeNodeIndex,
-                                         const LocalIndex*,
-                                         Vec4<double>*);
-
-template void computeLeafSourceCenterGpu(const double*,
-                                         const double*,
-                                         const double*,
-                                         const float*,
-                                         const TreeNodeIndex*,
-                                         TreeNodeIndex,
-                                         const LocalIndex*,
-                                         Vec4<float>*);
-
-template void computeLeafSourceCenterGpu(const float*,
-                                         const float*,
-                                         const float*,
-                                         const float*,
-                                         const TreeNodeIndex*,
-                                         TreeNodeIndex,
-                                         const LocalIndex*,
-                                         Vec4<float>*);
+COMPUTE_LEAF_SOURCE_CENTER_GPU(double, double, double);
+COMPUTE_LEAF_SOURCE_CENTER_GPU(double, float, double);
+COMPUTE_LEAF_SOURCE_CENTER_GPU(float, float, float);
 
 template<class T>
 __global__ void upsweepCentersKernel(TreeNodeIndex firstCell,
@@ -164,9 +136,90 @@ void computeGeoCentersGpu(
     computeGeoCentersKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, centers, sizes, box);
 }
 
-template void computeGeoCentersGpu(const uint32_t*, TreeNodeIndex, Vec3<float>*, Vec3<float>*, const Box<float>&);
-template void computeGeoCentersGpu(const uint32_t*, TreeNodeIndex, Vec3<double>*, Vec3<double>*, const Box<double>&);
-template void computeGeoCentersGpu(const uint64_t*, TreeNodeIndex, Vec3<float>*, Vec3<float>*, const Box<float>&);
-template void computeGeoCentersGpu(const uint64_t*, TreeNodeIndex, Vec3<double>*, Vec3<double>*, const Box<double>&);
+#define GEO_CENTERS_GPU(KeyType, T)                                                                                    \
+    template void computeGeoCentersGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec3<T>* centers,              \
+                                       Vec3<T>* sizes, const Box<T>& box)
+GEO_CENTERS_GPU(uint32_t, float);
+GEO_CENTERS_GPU(uint32_t, double);
+GEO_CENTERS_GPU(uint64_t, float);
+GEO_CENTERS_GPU(uint64_t, double);
+
+template<class KeyType, class T>
+__global__ void geoMacSpheresKernel(
+    const KeyType* prefixes, TreeNodeIndex numNodes, SourceCenterType<T>* centers, float invTheta, Box<T> box)
+{
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) { return; }
+    centers[i] = computeMinMacR2(prefixes[i], invTheta, box);
+}
+
+//! @brief set @p centers to geometric node centers with Mac radius l * invTheta
+template<class KeyType, class T>
+void geoMacSpheresGpu(
+    const KeyType* prefixes, TreeNodeIndex numNodes, SourceCenterType<T>* centers, float invTheta, const Box<T>& box)
+{
+    unsigned numThreads = 256;
+    unsigned numBlocks  = iceil(numNodes, numThreads);
+    geoMacSpheresKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, centers, invTheta, box);
+}
+
+#define GEO_MAC_SPHERES_GPU(KeyType, T)                                                                                \
+    template void geoMacSpheresGpu(const KeyType* prefixes, TreeNodeIndex numNodes, SourceCenterType<T>* centers,      \
+                                   float invTheta, const Box<T>& box)
+GEO_MAC_SPHERES_GPU(uint32_t, float);
+GEO_MAC_SPHERES_GPU(uint32_t, double);
+GEO_MAC_SPHERES_GPU(uint64_t, float);
+GEO_MAC_SPHERES_GPU(uint64_t, double);
+
+template<class KeyType, class T>
+__global__ void
+setMacKernel(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T> box)
+{
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) { return; }
+
+    Vec4<T> center   = macSpheres[i];
+    T mac            = computeVecMacR2(prefixes[i], util::makeVec3(center), invTheta, box);
+    macSpheres[i][3] = (center[3] != T(0)) ? mac : T(0);
+}
+
+template<class KeyType, class T>
+void setMacGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta, const Box<T>& box)
+{
+    unsigned numThreads = 256;
+    unsigned numBlocks  = iceil(numNodes, numThreads);
+    setMacKernel<<<numBlocks, numThreads>>>(prefixes, numNodes, macSpheres, invTheta, box);
+}
+
+#define SET_MAC_GPU(KeyType, T)                                                                                        \
+    template void setMacGpu(const KeyType* prefixes, TreeNodeIndex numNodes, Vec4<T>* macSpheres, float invTheta,      \
+                            const Box<T>& box)
+
+SET_MAC_GPU(uint32_t, float);
+SET_MAC_GPU(uint64_t, float);
+SET_MAC_GPU(uint32_t, double);
+SET_MAC_GPU(uint64_t, double);
+
+template<class T>
+__global__ void moveCentersKernel(const Vec3<T>* src, TreeNodeIndex numNodes, Vec4<T>* dest)
+{
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= numNodes) { return; }
+    dest[i][0] = src[i][0];
+    dest[i][1] = src[i][1];
+    dest[i][2] = src[i][2];
+    dest[i][3] = 1.0;
+}
+
+template<class T>
+void moveCenters(const Vec3<T>* src, TreeNodeIndex numNodes, Vec4<T>* dest)
+{
+    unsigned numThreads = 256;
+    unsigned numBlocks  = iceil(numNodes, numThreads);
+    moveCentersKernel<<<numBlocks, numThreads>>>(src, numNodes, dest);
+}
+
+template void moveCenters(const Vec3<double>*, TreeNodeIndex, Vec4<double>*);
+template void moveCenters(const Vec3<float>*, TreeNodeIndex, Vec4<float>*);
 
 } // namespace cstone

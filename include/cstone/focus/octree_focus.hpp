@@ -46,9 +46,13 @@
 #include "cstone/util/gsl-lite.hpp"
 #include "cstone/domain/index_ranges.hpp"
 
+#include "cstone/focus/inject.hpp"
 #include "cstone/focus/rebalance.hpp"
 #include "cstone/focus/rebalance_gpu.h"
+#include "cstone/focus/source_center.hpp"
+#include "cstone/focus/source_center_gpu.h"
 #include "cstone/primitives/primitives_gpu.h"
+#include "cstone/traversal/collisions_gpu.h"
 #include "cstone/traversal/macs.hpp"
 #include "cstone/tree/csarray_gpu.h"
 #include "cstone/tree/octree.hpp"
@@ -158,7 +162,7 @@ struct CombinedUpdate
                                gsl::span<const unsigned> counts,
                                gsl::span<const char> macs)
     {
-        [[maybe_unused]] TreeNodeIndex numNodes = tree.numLeafNodes + tree.numInternalNodes;
+        TreeNodeIndex numNodes = tree.numLeafNodes + tree.numInternalNodes;
         assert(TreeNodeIndex(counts.size()) == numNodes);
         assert(TreeNodeIndex(macs.size()) == numNodes);
         assert(TreeNodeIndex(tree.internalToLeaf.size()) >= numNodes);
@@ -170,14 +174,12 @@ struct CombinedUpdate
                                       numNodes);
 
         auto status = ResolutionStatus::converged;
-        if (!mandatoryKeys.empty())
-        {
-            thrust::device_vector<KeyType, Alloc> d_mandatoryKeys;
-            reallocate(d_mandatoryKeys, mandatoryKeys.size(), 1.0);
-            memcpyH2D(mandatoryKeys.data(), mandatoryKeys.size(), rawPtr(d_mandatoryKeys));
-            status = enforceKeysGpu(rawPtr(d_mandatoryKeys), d_mandatoryKeys.size(), rawPtr(tree.prefixes),
-                                    rawPtr(tree.childOffsets), rawPtr(tree.parents), nodeOpsAll.data());
-        }
+
+        thrust::device_vector<KeyType, Alloc> d_mandatoryKeys;
+        reallocate(d_mandatoryKeys, mandatoryKeys.size(), 1.0);
+        memcpyH2D(mandatoryKeys.data(), mandatoryKeys.size(), rawPtr(d_mandatoryKeys));
+        status         = enforceKeysGpu(rawPtr(d_mandatoryKeys), d_mandatoryKeys.size(), rawPtr(tree.prefixes),
+                                        rawPtr(tree.childOffsets), rawPtr(tree.parents), nodeOpsAll.data());
         bool converged = protectAncestorsGpu(rawPtr(tree.prefixes), rawPtr(tree.parents), nodeOpsAll.data(), numNodes);
 
         // extract leaf decision, using childOffsets as temp storage
@@ -195,31 +197,150 @@ struct CombinedUpdate
         TreeNodeIndex newNumLeafNodes;
         memcpyD2H(nodeOps.data() + nodeOps.size() - 1, 1, &newNumLeafNodes);
 
-        // carry out rebalance based on nodeOps
         auto& newLeaves = tree.prefixes;
-        reallocateDestructive(newLeaves, newNumLeafNodes + 1, 1.01);
+        reallocateDestructive(newLeaves, newNumLeafNodes + 1, 1.05);
         rebalanceTreeGpu(rawPtr(leaves), nNodes(leaves), newNumLeafNodes, nodeOps.data(), rawPtr(newLeaves));
+        swap(newLeaves, leaves);
 
         // if rebalancing couldn't introduce the mandatory keys, we force-inject them now into the tree
         if (status == ResolutionStatus::failed)
         {
             converged = false;
-
-            std::vector<KeyType> hostLeaves(newLeaves.size());
-            memcpyD2H(rawPtr(newLeaves), newLeaves.size(), hostLeaves.data());
-
-            injectKeys<KeyType>(hostLeaves, mandatoryKeys);
-            reallocateDestructive(newLeaves, hostLeaves.size(), 1.01);
-            memcpyH2D(hostLeaves.data(), newLeaves.size(), rawPtr(newLeaves));
+            injectKeysGpu(tree, leaves, d_mandatoryKeys);
         }
 
-        swap(newLeaves, leaves);
         tree.resize(nNodes(leaves));
         buildOctreeGpu(rawPtr(leaves), tree.data());
 
         return converged;
     }
 };
+
+template<class KeyType>
+bool updateMacRefine(OctreeData<KeyType, CpuTag>& tree,
+                     std::vector<KeyType>& leaves,
+                     gsl::span<const char> macs,
+                     TreeIndexPair focus)
+{
+    assert(tree.childOffsets.size() >= size_t(tree.numLeafNodes + 1));
+    gsl::span<TreeNodeIndex> nodeOps(tree.childOffsets.data(), tree.numLeafNodes + 1);
+
+    auto l2i = leafToInternal(tree);
+#pragma omp parallel for schedule(static)
+    for (TreeNodeIndex i = 0; i < tree.numLeafNodes; ++i)
+    {
+        if (i < focus.start() || i >= focus.end()) { nodeOps[i] = macRefineOp(tree.prefixes[l2i[i]], macs[l2i[i]]); }
+        else { nodeOps[i] = 1; }
+    }
+
+    bool converged  = std::all_of(nodeOps.begin(), nodeOps.end() - 1, [](TreeNodeIndex i) { return i == 1; });
+    auto& newLeaves = tree.prefixes;
+    rebalanceTree(leaves, newLeaves, nodeOps.data());
+
+    swap(newLeaves, leaves);
+    tree.resize(nNodes(leaves));
+    updateInternalTree<KeyType>(leaves, tree.data());
+
+    return converged;
+}
+
+template<class T, class KeyType>
+bool macRefine(OctreeData<KeyType, CpuTag>& tree,
+               std::vector<KeyType>& leaves,
+               std::vector<SourceCenterType<T>>& centers,
+               std::vector<char>& macs,
+               KeyType oldFocusStart,
+               KeyType oldFocusEnd,
+               KeyType focusStart,
+               KeyType focusEnd,
+               float invTheta,
+               const Box<T>& box)
+{
+    if (oldFocusStart == focusStart && oldFocusEnd == focusEnd) { return true; }
+    centers.resize(tree.numNodes);
+    geoMacSpheres<KeyType>(tree.prefixes, rawPtr(centers), invTheta, box);
+
+    macs.resize(tree.numNodes);
+    std::fill(macs.begin(), macs.end(), 0);
+
+    KeyType growthLower = focusStart < oldFocusStart ? oldFocusStart : focusStart;
+    KeyType growthUpper = oldFocusEnd < focusEnd ? oldFocusEnd : focusEnd;
+
+    TreeNodeIndex fGrowL = findNodeAbove(rawPtr(leaves), nNodes(leaves), growthLower);
+    TreeNodeIndex fGrowU = findNodeAbove(rawPtr(leaves), nNodes(leaves), growthUpper);
+    TreeNodeIndex fStart = findNodeAbove(rawPtr(leaves), nNodes(leaves), focusStart);
+    TreeNodeIndex fEnd   = findNodeAbove(rawPtr(leaves), nNodes(leaves), focusEnd);
+
+    markMacs(rawPtr(tree.prefixes), rawPtr(tree.childOffsets), rawPtr(centers), box, rawPtr(leaves) + fStart,
+             fGrowL - fStart, true, rawPtr(macs));
+    markMacs(rawPtr(tree.prefixes), rawPtr(tree.childOffsets), rawPtr(centers), box, rawPtr(leaves) + fGrowU,
+             fEnd - fGrowU, true, rawPtr(macs));
+
+    return updateMacRefine(tree, leaves, macs, {fStart, fEnd});
+}
+
+template<class KeyType, class Alloc>
+bool updateMacRefineGpu(OctreeData<KeyType, GpuTag>& tree,
+                        thrust::device_vector<KeyType, Alloc>& leaves,
+                        const char* macs,
+                        TreeIndexPair focus)
+{
+    assert(tree.childOffsets.size() >= size_t(tree.numLeafNodes + 1));
+    gsl::span<TreeNodeIndex> nodeOps(rawPtr(tree.childOffsets), tree.numLeafNodes + 1);
+
+    auto l2i = leafToInternal(tree);
+    macRefineDecisionGpu(rawPtr(tree.prefixes), macs, l2i.data(), l2i.size(), focus, nodeOps.data());
+
+    bool converged = countGpu(nodeOps.cbegin(), nodeOps.cend() - 1, 1) == tree.numLeafNodes;
+    exclusiveScanGpu(nodeOps.data(), nodeOps.data() + nodeOps.size(), nodeOps.data());
+    TreeNodeIndex newNumLeafNodes;
+    memcpyD2H(nodeOps.data() + nodeOps.size() - 1, 1, &newNumLeafNodes);
+
+    auto& newLeaves = tree.prefixes;
+    reallocateDestructive(newLeaves, newNumLeafNodes + 1, 1.05);
+    rebalanceTreeGpu(rawPtr(leaves), nNodes(leaves), newNumLeafNodes, nodeOps.data(), rawPtr(newLeaves));
+    swap(newLeaves, leaves);
+
+    tree.resize(nNodes(leaves));
+    buildOctreeGpu(rawPtr(leaves), tree.data());
+
+    return converged;
+}
+
+template<class T, class KeyType, template<class> class Alloc>
+bool macRefineGpu(OctreeData<KeyType, GpuTag>& tree,
+                  thrust::device_vector<KeyType, Alloc<KeyType>>& leaves,
+                  thrust::device_vector<SourceCenterType<T>, Alloc<SourceCenterType<T>>>& centers,
+                  thrust::device_vector<char, Alloc<char>>& macs,
+                  KeyType oldFocusStart,
+                  KeyType oldFocusEnd,
+                  KeyType focusStart,
+                  KeyType focusEnd,
+                  float invTheta,
+                  const Box<T>& box)
+{
+    if (oldFocusStart == focusStart && oldFocusEnd == focusEnd) { return true; }
+    reallocateDevice(centers, tree.numNodes, 1.05);
+    geoMacSpheresGpu(rawPtr(tree.prefixes), tree.numNodes, rawPtr(centers), invTheta, box);
+
+    reallocateDevice(macs, tree.numNodes, 1.05);
+    fillGpu(rawPtr(macs), rawPtr(macs) + macs.size(), char(0));
+
+    KeyType growthLower = focusStart < oldFocusStart ? oldFocusStart : focusStart;
+    KeyType growthUpper = oldFocusEnd < focusEnd ? oldFocusEnd : focusEnd;
+
+    TreeNodeIndex fGrowL = lowerBoundGpu(rawPtr(leaves), rawPtr(leaves) + nNodes(leaves), growthLower);
+    TreeNodeIndex fStart = lowerBoundGpu(rawPtr(leaves), rawPtr(leaves) + nNodes(leaves), focusStart);
+    TreeNodeIndex fEnd   = lowerBoundGpu(rawPtr(leaves), rawPtr(leaves) + nNodes(leaves), focusEnd);
+    TreeNodeIndex fGrowU = lowerBoundGpu(rawPtr(leaves), rawPtr(leaves) + nNodes(leaves), growthUpper);
+
+    markMacsGpu(rawPtr(tree.prefixes), rawPtr(tree.childOffsets), rawPtr(centers), box, rawPtr(leaves) + fStart,
+                fGrowL - fStart, true, rawPtr(macs));
+    markMacsGpu(rawPtr(tree.prefixes), rawPtr(tree.childOffsets), rawPtr(centers), box, rawPtr(leaves) + fGrowU,
+                fEnd - fGrowU, true, rawPtr(macs));
+
+    return updateMacRefineGpu(tree, leaves, rawPtr(macs), {fStart, fEnd});
+}
 
 /*! @brief A fully traversable octree, locally focused w.r.t a MinMac criterion
  *
@@ -264,7 +385,11 @@ public:
         }
 
         macs_.resize(tree_.numNodes);
-        markMacs(tree_.data(), centers_.data(), box, focusStart, focusEnd, macs_.data());
+        std::fill(macs_.begin(), macs_.end(), 0);
+        TreeNodeIndex fStart = findNodeAbove(rawPtr(leaves_), nNodes(leaves_), focusStart);
+        TreeNodeIndex fEnd   = findNodeAbove(rawPtr(leaves_), nNodes(leaves_), focusEnd);
+        markMacs(tree_.prefixes.data(), tree_.childOffsets.data(), centers_.data(), box, rawPtr(leaves_) + fStart,
+                 fEnd - fStart, false, macs_.data());
 
         leafCounts_.resize(nNodes(leaves_));
         computeNodeCounts(leaves_.data(), leafCounts_.data(), nNodes(leaves_), particleKeys.data(),
