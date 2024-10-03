@@ -1,9 +1,11 @@
 include(cstone_add_test)
 
 set(UNIT_TEST_SOURCES_GPU
+        cuda/device_vector.cu
         domain/domaindecomp_gpu.cu
         halos/gather_halos_gpu.cu
         primitives/clz.cu
+        primitives/gather.cu
         primitives/primitives_gpu.cu
         primitives/warpscan.cu
         focus/inject.cu
