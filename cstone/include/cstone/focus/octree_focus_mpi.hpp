@@ -34,6 +34,7 @@
 #include <numeric>
 
 #include "cstone/cuda/cuda_utils.hpp"
+#include "cstone/cuda/device_vector.h"
 #include "cstone/domain/layout.hpp"
 #include "cstone/focus/exchange_focus.hpp"
 #include "cstone/focus/octree_focus.hpp"
@@ -52,8 +53,7 @@ class FocusedOctree
 {
     //! @brief A vector template that resides on the hardware specified as Accelerator
     template<class ValueType>
-    using AccVector =
-        typename AccelSwitchType<Accelerator, std::vector, thrust::device_vector>::template type<ValueType>;
+    using AccVector = typename AccelSwitchType<Accelerator, std::vector, DeviceVector>::template type<ValueType>;
 
 public:
     /*! @brief constructor
@@ -165,9 +165,10 @@ public:
         {
             syncTreeletsGpu(peers_, assignment_, leaves_, octreeAcc_, leavesAcc_, treelets_, treeletIdx_);
             downloadOctree();
-            indexTreelets<KeyType>(treeData_.prefixes, treeData_.levelRange, treelets_, treeletIdx_);
         }
         else { syncTreelets(peers_, assignment_, treeData_, leaves_, treelets_, treeletIdx_); }
+
+        indexTreelets<KeyType>(peerRanks, treeData_.prefixes, treeData_.levelRange, treelets_, treeletIdx_);
 
         translateAssignment<KeyType>(assignment, leaves_, peers_, myRank_, assignment_);
 
@@ -372,7 +373,7 @@ public:
                               rawPtr(centersAcc_));
             memcpyD2H(rawPtr(centersAcc_), numNodes, centers_.data());
 
-            reallocateDevice(scratch1, osz1, 1.0);
+            reallocate(scratch1, osz1, 1.0);
         }
         else
         {
