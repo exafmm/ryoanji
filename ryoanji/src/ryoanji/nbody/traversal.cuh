@@ -230,15 +230,16 @@ __device__ util::tuple<unsigned, unsigned, unsigned>
         {
             sourceQueue = cellQueue[ringAddr(oldSources + sourceIdx)]; // Global source cell index in queue
         }
-        sourceQueue = spreadSeg8(sourceQueue);
-        sourceIdx   = shflSync(sourceIdx, laneIdx >> 3);
+        sourceQueue         = spreadSeg8(sourceQueue);
+        sourceIdx           = shflSync(sourceIdx, laneIdx >> 3);
+        const bool isSource = sourceIdx < numSources; // Source index is within bounds
+        if (!isSource) { sourceQueue = 0; }
 
         const Vec4<Tf> MAC = sourceCenter[sourceQueue];        // load source cell center + MAC
         const Vec3<Tf> curSrcCenter{MAC[0], MAC[1], MAC[2]};   // Current source cell center
         const int      childBegin = childOffsets[sourceQueue]; // First child cell
         const bool     isNode     = childBegin;
         const bool     isClose    = applyMAC(curSrcCenter, MAC[3], targetCenter, targetSize); // Is too close for MAC
-        const bool     isSource   = sourceIdx < numSources; // Source index is within bounds
         const bool     isDirect   = isClose && !isNode && isSource;
         const int      leafIdx    = (isDirect) ? internalToLeaf[sourceQueue] : 0; // the cstone leaf index
 
@@ -603,9 +604,9 @@ auto computeAcceleration(size_t firstBody, size_t lastBody, const Tc* x, const T
 
     resetTraversalCounters<<<1, 1>>>();
     auto t0 = std::chrono::high_resolution_clock::now();
-    traverse<<<numBlocks, TravConfig::numThreads>>>(groups.view(), 1, x, y, z, m, h, childOffsets, internalToLeaf,
-                                                    layout, sourceCenter, Multipole, G, numShells,
-                                                    {box.lx(), box.ly(), box.lz()}, p, ax, ay, az, rawPtr(globalPool));
+    traverse<<<numBlocks, TravConfig::numThreads>>>(
+        groups.view(), 1, x, y, z, m, h, childOffsets, internalToLeaf, layout, sourceCenter, Multipole, G, numShells,
+        {box.lx(), box.ly(), box.lz()}, p, ax, ay, az, thrust::raw_pointer_cast(globalPool.data()));
     kernelSuccess("traverse");
 
     auto   t1 = std::chrono::high_resolution_clock::now();
