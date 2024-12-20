@@ -1,25 +1,10 @@
 /*
- * MIT License
+ * Cornerstone octree
  *
- * Copyright (c) 2022 CSCS, ETH Zurich
+ * Copyright (c) 2024 CSCS, ETH Zurich, University of Zurich, 2021 University of Basel
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
  */
 
 /*! @file
@@ -43,7 +28,7 @@
 #include "cstone/primitives/primitives_gpu.h"
 #include "cstone/traversal/collisions.hpp"
 #include "cstone/traversal/collisions_gpu.h"
-#include "cstone/tree/accel_switch.hpp"
+#include "cstone/primitives/accel_switch.hpp"
 #include "cstone/util/gsl-lite.hpp"
 #include "cstone/util/reallocate.hpp"
 
@@ -54,10 +39,10 @@ namespace detail
 {
 
 //! @brief check that only owned particles in [particleStart_:particleEnd_] are sent out as halos
-void checkIndices(const SendList& sendList,
-                  [[maybe_unused]] LocalIndex start,
-                  [[maybe_unused]] LocalIndex end,
-                  [[maybe_unused]] LocalIndex bufferSize)
+static void checkIndices(const SendList& sendList,
+                         [[maybe_unused]] LocalIndex start,
+                         [[maybe_unused]] LocalIndex end,
+                         [[maybe_unused]] LocalIndex bufferSize)
 {
     for (const auto& manifest : sendList)
     {
@@ -170,7 +155,8 @@ public:
             auto* d_flags = reinterpret_cast<int*>(rawPtr(scratch));
             auto* d_radii = reinterpret_cast<float*>(rawPtr(scratch)) + flagBytes / sizeof(float);
 
-            exclusiveScanGpu(counts.data() + firstNode, counts.data() + lastNode + 1, layout.data() + firstNode);
+            fillGpu(layout.data() + firstNode, layout.data() + firstNode + 1, LocalIndex(0));
+            inclusiveScanGpu(counts.data() + firstNode, counts.data() + lastNode, layout.data() + firstNode + 1);
             segmentMax(h, layout.data() + firstNode, numNodesSearch, d_radii + firstNode);
             // SPH convention: interaction radius = 2 * h
             scaleGpu(d_radii, d_radii + numLeafNodes, 2.0f * searchExtFact);
@@ -183,7 +169,9 @@ public:
         }
         else
         {
-            std::exclusive_scan(counts.begin() + firstNode, counts.begin() + lastNode + 1, layout.begin(), 0);
+            layout[0] = 0;
+            std::inclusive_scan(counts.begin() + firstNode, counts.begin() + lastNode, layout.begin() + 1,
+                                std::plus<>{}, LocalIndex(0));
             std::vector<float> haloRadii(counts.size(), 0.0f);
 #pragma omp parallel for schedule(static)
             for (TreeNodeIndex i = 0; i < numNodesSearch; ++i)
@@ -229,7 +217,7 @@ public:
         if (detail::checkHalos(myRank_, assignment, haloFlags_, leaves)) { return 1; }
         detail::checkIndices(outgoingHaloIndices_, newParticleStart, newParticleEnd, layout.back());
 
-        incomingHaloIndices_ = computeHaloReceiveList(layout, haloFlags_, assignment, peers);
+        incomingHaloIndices_ = computeHaloRecvList(layout, haloFlags_, assignment, peers);
         return 0;
     }
 
@@ -267,7 +255,7 @@ public:
 private:
     int myRank_;
 
-    SendList incomingHaloIndices_;
+    RecvList incomingHaloIndices_;
     SendList outgoingHaloIndices_;
 
     std::vector<int> haloFlags_;

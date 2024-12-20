@@ -38,7 +38,6 @@
 #include "cstone/cuda/cuda_utils.cuh"
 #include "cstone/cuda/thrust_util.cuh"
 #include "cstone/findneighbors.hpp"
-#include "cstone/primitives/math.hpp"
 
 #include "cstone/traversal/find_neighbors.cuh"
 
@@ -205,8 +204,8 @@ void benchmarkGpu()
     const TreeNodeIndex* childOffsets = octree.childOffsets.data();
     const TreeNodeIndex* toLeafOrder  = octree.internalToLeaf.data();
 
-    std::vector<LocalIndex> layout(nNodes(csTree) + 1);
-    std::exclusive_scan(counts.begin(), counts.end() + 1, layout.begin(), 0);
+    std::vector<LocalIndex> layout(nNodes(csTree) + 1, 0);
+    std::inclusive_scan(counts.begin(), counts.end(), layout.begin() + 1);
 
     std::vector<Vec3<T>> centers(octree.numNodes), sizes(octree.numNodes);
     gsl::span<const KeyType> nodeKeys(octree.prefixes.data(), octree.numNodes);
