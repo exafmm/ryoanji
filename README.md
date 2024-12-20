@@ -42,13 +42,10 @@ make -j
 
 AMD HIP, MI250x
 
-In order to build the code for AMD GPUs, the source code (`.cuh` and `.cu` only) must be hipified.
-CMake files are already prepared to work with HIP and should not need to be modified.
+The code can directly be built with HIP, no hipification needed:
 
 ```bash
-cd <GIT_SOURCE_DIR>
-hipify-perl -inplace `find -name *.cuh -o -name *.cu` && find -name *.prehip -delete
-CC=mpicc CXX=mpicxx cmake -DCMAKE_HIP_ARCHITECTURES=gfx90a -DGPU_DIRECT=<ON/OFF> <GIT_SOURCE_DIR> && make -j
+CC=mpicc CXX=mpicxx cmake -DCMAKE_HIP_ARCHITECTURES=gfx90a -DCSTONE_WITH_GPU_AWARE_MPI=<ON/OFF> <GIT_SOURCE_DIR> && make -j
 ```
 
 ## Performance
@@ -81,8 +78,8 @@ available as part of the [SPH-EXA project](https://github.com/unibas-dmi-hpc/SPH
 
 ## Accuracy and correctness
 
-The demonstrator apps are configured by default to use an opening angle of `theta = 0.5` and
-spherical hexadecapole `(P=4)` expansions. This yields a 1st-percentile error of `~5e-4` in the accelerations.
+The demonstrator apps are configured by default to use an opening angle of `theta = 0.5` cartesian quadrupole expansions.
+This yields a 1st-percentile error of `~5e-4` in the accelerations.
 
 ```
 $$$ mpiexec -np 8 ./interface/global_forces_gpu 
