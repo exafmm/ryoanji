@@ -1,7 +1,7 @@
 /*
  * Cornerstone octree
  *
- * Copyright (c) 2024 CSCS, ETH Zurich, University of Zurich, 2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
  * Please, refer to the LICENSE file in the root directory.
  * SPDX-License-Identifier: MIT License
@@ -15,7 +15,6 @@
 
 #pragma once
 
-#include <numeric>
 #include <vector>
 
 #include "cstone/primitives/mpi_wrappers.hpp"
@@ -27,10 +26,11 @@ namespace cstone
 template<class... Arrays>
 void haloexchange(int epoch, const RecvList& incomingHalos, const SendList& outgoingHalos, Arrays... arrays)
 {
-    using IndexType     = SendManifest::IndexType;
-    int haloExchangeTag = static_cast<int>(P2pTags::haloExchange) + epoch;
+    using TransferType      = uint64_t;
+    constexpr int alignment = sizeof(TransferType);
+    int haloExchangeTag     = static_cast<int>(P2pTags::haloExchange) + epoch;
 
-    std::vector<std::vector<char>> sendBuffers;
+    std::vector<std::vector<TransferType>> sendBuffers;
     std::vector<MPI_Request> sendRequests;
 
     for (std::size_t destinationRank = 0; destinationRank < outgoingHalos.size(); ++destinationRank)
@@ -38,7 +38,7 @@ void haloexchange(int epoch, const RecvList& incomingHalos, const SendList& outg
         size_t sendCount = outgoingHalos[destinationRank].totalCount();
         if (sendCount == 0) continue;
 
-        std::vector<char> buffer(util::computeByteOffsets(sendCount, 1, arrays...).back());
+        std::vector<TransferType> buffer(util::computeByteOffsets(sendCount, alignment, arrays...).back() / alignment);
 
         auto packSendBuffer = [&outHalos = outgoingHalos[destinationRank]](auto arrayPair)
         {
@@ -49,7 +49,7 @@ void haloexchange(int epoch, const RecvList& incomingHalos, const SendList& outg
             }
         };
 
-        auto packTuple = util::packBufferPtrs<1>(buffer.data(), sendCount, arrays...);
+        auto packTuple = util::packBufferPtrs<alignment>(buffer.data(), sendCount, arrays...);
         for_each_tuple(packSendBuffer, packTuple);
 
         mpiSendAsync(buffer.data(), buffer.size(), destinationRank, haloExchangeTag, sendRequests);
@@ -63,9 +63,9 @@ void haloexchange(int epoch, const RecvList& incomingHalos, const SendList& outg
         numMessages += int(incomingHalo.count() > 0);
         maxReceiveSize = std::max(maxReceiveSize, incomingHalo.count());
     }
-    size_t maxReceiveBytes = util::computeByteOffsets(maxReceiveSize, 1, arrays...).back();
+    size_t maxReceiveElements = util::computeByteOffsets(maxReceiveSize, alignment, arrays...).back() / alignment;
 
-    std::vector<char> receiveBuffer(maxReceiveBytes);
+    std::vector<TransferType> receiveBuffer(maxReceiveElements);
 
     while (numMessages--)
     {
@@ -77,7 +77,7 @@ void haloexchange(int epoch, const RecvList& incomingHalos, const SendList& outg
         auto unpack = [inHalos = incomingHalos[receiveRank]](auto arrayPair)
         { std::copy_n(arrayPair[1], inHalos.count(), arrayPair[0] + inHalos.start()); };
 
-        auto packTuple = util::packBufferPtrs<1>(receiveBuffer.data(), receiveCount, arrays...);
+        auto packTuple = util::packBufferPtrs<alignment>(receiveBuffer.data(), receiveCount, arrays...);
         for_each_tuple(unpack, packTuple);
     }
 

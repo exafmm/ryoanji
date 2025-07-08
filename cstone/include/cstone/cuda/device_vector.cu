@@ -1,3 +1,12 @@
+/*
+ * Cornerstone octree
+ *
+ * Copyright (c) 2024 CSCS, ETH Zurich
+ *
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
+ */
+
 /*! @file
  * @brief  Encapsulation around a std::vector like GPU-resident device vector, suitable for use in .cpp files
  *
@@ -29,6 +38,7 @@ public:
     void resize(std::size_t size) { data_.resize(size); }
 
     void reserve(std::size_t size) { data_.reserve(size); };
+    void shrink_to_fit() { data_.shrink_to_fit(); };
 
     std::size_t size() const { return data_.size(); };
     std::size_t capacity() const { return data_.capacity(); };
@@ -95,43 +105,49 @@ template<class T>
 T* DeviceVector<T>::data()
 {
     return impl_->data();
-};
+}
 
 template<class T>
 const T* DeviceVector<T>::data() const
 {
     return impl_->data();
-};
+}
 
 template<class T>
 void DeviceVector<T>::resize(std::size_t size)
 {
     impl_->resize(size);
-};
+}
 
 template<class T>
 void DeviceVector<T>::reserve(std::size_t size)
 {
     impl_->reserve(size);
-};
+}
+
+template<class T>
+void DeviceVector<T>::shrink_to_fit()
+{
+    impl_->shrink_to_fit();
+}
 
 template<class T>
 std::size_t DeviceVector<T>::size() const
 {
     return impl_->size();
-};
+}
 
 template<class T>
 bool DeviceVector<T>::empty() const
 {
     return impl_->size() == 0;
-};
+}
 
 template<class T>
 std::size_t DeviceVector<T>::capacity() const
 {
     return impl_->capacity();
-};
+}
 
 template<class T>
 DeviceVector<T>& DeviceVector<T>::swap(DeviceVector<T>& rhs)

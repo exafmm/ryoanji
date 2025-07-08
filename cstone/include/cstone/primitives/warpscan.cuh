@@ -1,7 +1,7 @@
 /*
  * Cornerstone octree
  *
- * Copyright (c) 2024 CSCS, ETH Zurich, University of Zurich, 2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
  * Please, refer to the LICENSE file in the root directory.
  * SPDX-License-Identifier: MIT License
@@ -18,6 +18,7 @@
 #include <type_traits>
 
 #include "cstone/cuda/gpu_config.cuh"
+#include "cstone/primitives/clz.hpp"
 
 namespace cstone
 {
@@ -25,10 +26,6 @@ namespace cstone
 //! @brief there's no int overload for min in AMD ROCM
 __device__ __forceinline__ int imin(int a, int b) { return a < b ? a : b; }
 __device__ __forceinline__ unsigned imin(unsigned a, unsigned b) { return a < b ? a : b; }
-
-__device__ __forceinline__ int countLeadingZeros(uint32_t x) { return __clz(x); }
-
-__device__ __forceinline__ int countLeadingZeros(uint64_t x) { return __clzll(x); }
 
 __device__ __forceinline__ uint32_t reverseBits(uint32_t x) { return __brev(x); }
 
@@ -280,13 +277,18 @@ __device__ __forceinline__ int spreadSeg8(int val)
     return shflSync(val, laneIdx >> 3) + (laneIdx & 7);
 }
 
+// source: https://stackoverflow.com/a/72461459 CC BY-SA 4.0 by user timothygiraffe
 __device__ __forceinline__ float atomicMinFloat(float* addr, float value)
 {
-    float old;
-    old = (value >= 0) ? __int_as_float(atomicMin((int*)addr, __float_as_int(value)))
-                       : __uint_as_float(atomicMax((unsigned int*)addr, __float_as_uint(value)));
+    return !signbit(value) ? __int_as_float(atomicMin((int*)addr, __float_as_int(value)))
+                           : __uint_as_float(atomicMax((unsigned int*)addr, __float_as_uint(value)));
+}
 
-    return old;
+// source: https://stackoverflow.com/a/72461459 CC BY-SA 4.0 by user timothygiraffe
+__device__ __forceinline__ float atomicMaxFloat(float* addr, float value)
+{
+    return !signbit(value) ? __int_as_float(atomicMax((int*)addr, __float_as_int(value)))
+                           : __uint_as_float(atomicMin((unsigned int*)addr, __float_as_uint(value)));
 }
 
 } // namespace cstone

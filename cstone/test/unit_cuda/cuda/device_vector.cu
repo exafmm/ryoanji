@@ -1,3 +1,12 @@
+/*
+ * Cornerstone octree
+ *
+ * Copyright (c) 2024 CSCS, ETH Zurich
+ *
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
+ */
+
 /*! @file
  * @brief  Tests for SFC related GPU device functions
  *
@@ -91,4 +100,14 @@ TEST(DeviceVector, Capacity)
     reallocate(a, 0, 1.0);
     EXPECT_EQ(a.size(), 0);
     EXPECT_EQ(a.capacity(), 10);
+}
+
+TEST(DeviceVector, ShrinkToFit)
+{
+    DeviceVector<int> a(10);
+    EXPECT_EQ(a.capacity(), 10);
+    reallocate(a, 8, 1.0);
+    a.shrink_to_fit();
+    EXPECT_EQ(a.size(), 8);
+    EXPECT_EQ(a.capacity(), 8);
 }

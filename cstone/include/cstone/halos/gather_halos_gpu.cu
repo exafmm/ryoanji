@@ -1,7 +1,7 @@
 /*
  * Cornerstone octree
  *
- * Copyright (c) 2024 CSCS, ETH Zurich, University of Zurich, 2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
  * Please, refer to the LICENSE file in the root directory.
  * SPDX-License-Identifier: MIT License
@@ -18,6 +18,8 @@
 #include "cstone/primitives/stl.hpp"
 #include "cstone/util/array.hpp"
 #include "gather_halos_gpu.h"
+
+#include <cstone/tree/definitions.h>
 
 namespace cstone
 {
@@ -64,8 +66,8 @@ template void
 gatherRanges(const unsigned*, const unsigned*, int, const util::array<float, 3>*, util::array<float, 3>*, size_t);
 template void
 gatherRanges(const unsigned*, const unsigned*, int, const util::array<float, 4>*, util::array<float, 4>*, size_t);
-template void
 
+template void
 gatherRanges(const uint64_t*, const uint64_t*, int, const util::array<float, 1>*, util::array<float, 1>*, size_t);
 template void
 gatherRanges(const uint64_t*, const uint64_t*, int, const util::array<float, 2>*, util::array<float, 2>*, size_t);

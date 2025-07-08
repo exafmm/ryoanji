@@ -1,3 +1,12 @@
+/*
+ * Cornerstone octree
+ *
+ * Copyright (c) 2024 CSCS, ETH Zurich
+ *
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
+ */
+
 /*! @file
  * @brief Cornerstone octree GPU testing
  *
@@ -41,7 +50,7 @@ protected:
     OctreeData<KeyType, GpuTag> octree;
     OctreeView<KeyType> ov;
     DeviceVector<SourceCenterType<T>> centers;
-    DeviceVector<char> macs;
+    DeviceVector<uint8_t> macs;
 };
 
 TEST_F(MacRefinementGpu, fullSurface)

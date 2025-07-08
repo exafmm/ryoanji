@@ -1,26 +1,10 @@
 /*
- * MIT License
+ * Cornerstone octree
  *
- * Copyright (c) 2021 CSCS, ETH Zurich
- *               2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
  */
 
 /*! @file
@@ -57,6 +41,7 @@ void fillGpu(T* first, T* last, T value)
 template void fillGpu(double*, double*, double);
 template void fillGpu(float*, float*, float);
 template void fillGpu(int*, int*, int);
+template void fillGpu(uint8_t*, uint8_t*, uint8_t);
 template void fillGpu(char*, char*, char);
 template void fillGpu(unsigned*, unsigned*, unsigned);
 template void fillGpu(uint64_t*, uint64_t*, uint64_t);
@@ -446,5 +431,23 @@ size_t countGpu(const ValueType* first, const ValueType* last, ValueType v)
 template size_t countGpu(const int* first, const int* last, int v);
 template size_t countGpu(const unsigned* first, const unsigned* last, unsigned v);
 template size_t countGpu(const uint64_t* first, const uint64_t* last, uint64_t v);
+
+template<class T, class S>
+__global__ void selectCopyKernel(const T* src, LocalIndex n, const S* selectFlags, T* dest)
+{
+    LocalIndex tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < n && selectFlags[tid]) { dest[tid] = src[tid]; }
+}
+
+template<class T, class S>
+void selectCopy(const T* src, LocalIndex n, const S* selectFlags, T* dest)
+{
+    int numThreads = 256;
+    int numBlocks  = iceil(n, numThreads);
+    if (numBlocks == 0) { return; }
+    selectCopyKernel<<<numBlocks, numThreads>>>(src, n, selectFlags, dest);
+}
+
+template void selectCopy(const unsigned*, LocalIndex, const uint8_t*, unsigned*);
 
 } // namespace cstone

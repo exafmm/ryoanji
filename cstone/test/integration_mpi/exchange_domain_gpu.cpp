@@ -1,26 +1,10 @@
 /*
- * MIT License
+ * Cornerstone octree
  *
- * Copyright (c) 2021 CSCS, ETH Zurich
- *               2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
  */
 
 /*! @file
@@ -80,11 +64,7 @@ void exchangeAllToAll(int thisRank, int numRanks)
     sends.back() = gridSize;
     for (int rank = 0; rank < numRanks; ++rank)
     {
-        int lower = rank * segmentSize;
-        int upper = lower + segmentSize;
-
-        if (rank == numRanks - 1) upper += gridSize % numRanks;
-
+        int lower   = rank * segmentSize;
         sends[rank] = lower;
     }
 
@@ -108,8 +88,10 @@ void exchangeAllToAll(int thisRank, int numRanks)
     reallocate(d_y, bufDesc.size, 1.0);
 
     ExchangeLog log;
-    exchangeParticlesGpu(0, log, sends, thisRank, bufDesc, numParticlesThisRank, sendScratch, receiveScratch,
-                         rawPtr(d_ordering), rawPtr(d_x), rawPtr(d_y));
+    auto recvStart = domain_exchange::receiveStart(bufDesc, numPartAssigned - numPartPresent);
+    auto recvEnd   = recvStart + numPartAssigned - numPartPresent;
+    exchangeParticlesGpu(0, log, sends, thisRank, recvStart, recvEnd, sendScratch, receiveScratch, rawPtr(d_ordering),
+                         rawPtr(d_x), rawPtr(d_y));
 
     reallocate(bufDesc.size, 1.01, x, y);
     memcpyD2H(d_x.data(), d_x.size(), x.data());
@@ -195,7 +177,9 @@ void exchangeCyclicNeighbors(int thisRank, int numRanks)
     reallocate(bufDesc.size * 10, 1.01, sendScratch, receiveScratch);
 
     ExchangeLog log;
-    exchangeParticlesGpu(0, log, sends, thisRank, bufDesc, gridSize, sendScratch, receiveScratch, rawPtr(d_ordering),
+    auto recvStart = domain_exchange::receiveStart(bufDesc, numPartAssigned - numPartPresent);
+    auto recvEnd   = recvStart + numPartAssigned - numPartPresent;
+    exchangeParticlesGpu(0, log, sends, thisRank, recvStart, recvEnd, sendScratch, receiveScratch, rawPtr(d_ordering),
                          rawPtr(d_x), rawPtr(d_y), rawPtr(d_uint8Array), rawPtr(d_testArray));
 
     reallocate(bufDesc.size, 1.01, x, y, testArray, uint8Array);
