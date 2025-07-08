@@ -1,26 +1,10 @@
 /*
- * MIT License
+ * Cornerstone octree
  *
- * Copyright (c) 2021 CSCS, ETH Zurich
- *               2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
  */
 
 /*! @file
@@ -54,10 +38,10 @@ auto benchmarkMacsCpu(const OctreeView<KeyType>& octree,
                       TreeNodeIndex firstFocusNode,
                       TreeNodeIndex lastFocusNode)
 {
-    std::vector<char> macs(octree.numNodes, 0);
+    std::vector<uint8_t> macs(octree.numNodes, 0);
     auto findMacsLambda = [&octree, &centers, &box, &leaves, &macs, firstFocusNode, lastFocusNode]()
     {
-        markMacs(octree.prefixes, octree.childOffsets, centers, box, leaves.data() + firstFocusNode,
+        markMacs(octree.prefixes, octree.childOffsets, octree.parents, centers, box, leaves.data() + firstFocusNode,
                  lastFocusNode - firstFocusNode, false, macs.data());
     };
 
@@ -90,8 +74,8 @@ int main()
 
     auto fullBuild = [&]()
     {
-        while (!updateOctreeGpu(rawPtr(particleCodes), rawPtr(particleCodes) + numParticles, bucketSize, tree, counts,
-                                tmpTree, workArray))
+        while (!updateOctreeGpu<KeyType>({rawPtr(particleCodes), numParticles}, bucketSize, tree, counts, tmpTree,
+                                         workArray))
             ;
     };
 
@@ -100,10 +84,7 @@ int main()
               << " count: " << thrust::reduce(counts.begin(), counts.end(), 0) << std::endl;
 
     auto updateTree = [&]()
-    {
-        updateOctreeGpu(rawPtr(particleCodes), rawPtr(particleCodes) + numParticles, bucketSize, tree, counts, tmpTree,
-                        workArray);
-    };
+    { updateOctreeGpu<KeyType>({rawPtr(particleCodes), numParticles}, bucketSize, tree, counts, tmpTree, workArray); };
 
     float updateTime = timeGpu(updateTree);
     std::cout << "build time with guess " << updateTime / 1000 << " nNodes(tree): " << nNodes(tree)
@@ -126,13 +107,13 @@ int main()
     // halo discovery benchmark
 
     thrust::device_vector<float> haloRadii(nNodes(tree), 0.01);
-    thrust::device_vector<int> flags(nNodes(tree), 0);
+    thrust::device_vector<uint8_t> flags(nNodes(tree), 0);
 
     auto octreeView      = octree.data();
     auto findHalosLambda = [octree = octreeView, &box, &tree, &haloRadii, &flags]()
     {
-        findHalosGpu(octree.prefixes, octree.childOffsets, octree.internalToLeaf, rawPtr(tree), rawPtr(haloRadii), box,
-                     0, octree.numLeafNodes / 4, rawPtr(flags));
+        findHalosGpu(octree.prefixes, octree.childOffsets, octree.parents, octree.internalToLeaf, rawPtr(tree),
+                     rawPtr(haloRadii), box, 0, octree.numLeafNodes / 4, rawPtr(flags));
     };
 
     float findTime = timeGpu(findHalosLambda);
@@ -145,12 +126,12 @@ int main()
     OctreeView<KeyType> h_octree = h_octreeHarness.data();
     {
         thrust::host_vector<float> radii = haloRadii;
-        std::vector<int> h_flags(nNodes(tree), 0);
+        std::vector<uint8_t> h_flags(nNodes(tree), 0);
 
         auto findHalosCpuLambda = [&]()
         {
-            findHalos(h_octree.prefixes, h_octree.childOffsets, h_octree.internalToLeaf, h_tree.data(), radii.data(),
-                      box, 0, nNodes(tree) / 4, h_flags.data());
+            findHalos(h_octree.prefixes, h_octree.childOffsets, h_octree.parents, h_octree.internalToLeaf,
+                      h_tree.data(), radii.data(), box, 0, nNodes(tree) / 4, h_flags.data());
         };
         float findTimeCpu = timeCpu(findHalosCpuLambda);
         std::cout << "CPU halo discovery " << findTimeCpu << " nNodes(tree): " << nNodes(h_tree)
@@ -164,7 +145,7 @@ int main()
     TreeNodeIndex firstFocusNode = 10000 + 0;
     TreeNodeIndex lastFocusNode  = 10000 + octree.numLeafNodes / 2;
 
-    thrust::device_vector<char> macs(octree.numNodes);
+    thrust::device_vector<uint8_t> macs(octree.numNodes);
     thrust::device_vector<SourceCenterType<T>> centers(octree.numNodes);
 
     float invTheta = 1.0 / 0.5;
@@ -188,8 +169,8 @@ int main()
 
     auto findMacsLambda = [octree = octreeView, &centers, &box, &tree, &macs, firstFocusNode, lastFocusNode]()
     {
-        markMacsGpu(octree.prefixes, octree.childOffsets, rawPtr(centers), box, rawPtr(tree) + firstFocusNode,
-                    lastFocusNode - firstFocusNode, false, rawPtr(macs));
+        markMacsGpu(octree.prefixes, octree.childOffsets, octree.parents, rawPtr(centers), box,
+                    rawPtr(tree) + firstFocusNode, lastFocusNode - firstFocusNode, false, rawPtr(macs));
     };
 
     float macTime = timeGpu(findMacsLambda);
@@ -198,6 +179,6 @@ int main()
 
     auto macsCpu = benchmarkMacsCpu(h_octree, h_centers.data(), box, h_tree, firstFocusNode, lastFocusNode);
 
-    thrust::host_vector<char> macsGpuDl = macs;
+    thrust::host_vector<uint8_t> macsGpuDl = macs;
     std::cout << "GPU matches CPU " << std::equal(macsCpu.begin(), macsCpu.end(), macsGpuDl.begin());
 }

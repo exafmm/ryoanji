@@ -1,7 +1,7 @@
 /*
  * Cornerstone octree
  *
- * Copyright (c) 2024 CSCS, ETH Zurich, University of Zurich, 2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
  * Please, refer to the LICENSE file in the root directory.
  * SPDX-License-Identifier: MIT License
@@ -32,10 +32,12 @@
 
 #pragma once
 
+#include <iostream>
 #include <vector>
 
 #include "cstone/cuda/cuda_utils.hpp"
 #include "cstone/domain/domaindecomp.hpp"
+#include "cstone/primitives/primitives_acc.hpp"
 #include "cstone/util/tuple_util.hpp"
 #include "cstone/util/type_list.hpp"
 
@@ -55,7 +57,7 @@ namespace cstone
  *         that the input ranges did not cover
  */
 inline std::vector<IndexPair<TreeNodeIndex>>
-invertRanges(TreeNodeIndex first, gsl::span<const IndexPair<TreeNodeIndex>> ranges, TreeNodeIndex last)
+invertRanges(TreeNodeIndex first, std::span<const IndexPair<TreeNodeIndex>> ranges, TreeNodeIndex last)
 {
     std::vector<IndexPair<TreeNodeIndex>> invertedRanges;
 
@@ -74,7 +76,7 @@ invertRanges(TreeNodeIndex first, gsl::span<const IndexPair<TreeNodeIndex>> rang
 }
 
 //! @brief enumerate all input ranges with std::iota and pack them together in a single vector
-inline std::vector<TreeNodeIndex> enumerateRanges(gsl::span<const IndexPair<TreeNodeIndex>> ranges)
+inline std::vector<TreeNodeIndex> enumerateRanges(std::span<const IndexPair<TreeNodeIndex>> ranges)
 {
     std::vector<TreeNodeIndex> rangeCounts(ranges.size() + 1);
     std::transform(ranges.begin(), ranges.end(), rangeCounts.begin(), [](auto pair) { return pair.count(); });
@@ -92,7 +94,7 @@ inline std::vector<TreeNodeIndex> enumerateRanges(gsl::span<const IndexPair<Tree
  *
  * @tparam IntegralType  an integer type
  * @param source         array with quantities to extract, length N+1
- * @param flags          0 or 1 flags for index, length N
+ * @param flags          select flags, length N+1
  * @param firstReqIdx    first index, permissible range: [0:N]
  * @param secondReqIdx   second index, permissible range: [0:N+1]
  * @return               vector (of pairs) of elements of @p source that span all
@@ -107,8 +109,8 @@ inline std::vector<TreeNodeIndex> enumerateRanges(gsl::span<const IndexPair<Tree
  *  - Particle offsets from buffer layouts
  */
 template<class IntegralType>
-std::vector<IntegralType> extractMarkedElements(gsl::span<const IntegralType> source,
-                                                gsl::span<const int> flags,
+std::vector<IntegralType> extractMarkedElements(std::span<const IntegralType> source,
+                                                std::span<const LocalIndex> flags,
                                                 TreeNodeIndex firstReqIdx,
                                                 TreeNodeIndex secondReqIdx)
 {
@@ -117,7 +119,7 @@ std::vector<IntegralType> extractMarkedElements(gsl::span<const IntegralType> so
     while (firstReqIdx != secondReqIdx)
     {
         // advance to first halo (or to secondReqIdx)
-        while (firstReqIdx < secondReqIdx && flags[firstReqIdx] == 0)
+        while (firstReqIdx < secondReqIdx && flags[firstReqIdx + 1] == flags[firstReqIdx])
         {
             firstReqIdx++;
         }
@@ -127,7 +129,7 @@ std::vector<IntegralType> extractMarkedElements(gsl::span<const IntegralType> so
         {
             requestKeys.push_back(source[firstReqIdx]);
             // advance until not a halo or end of range
-            while (firstReqIdx < secondReqIdx && flags[firstReqIdx] == 1)
+            while (firstReqIdx < secondReqIdx && flags[firstReqIdx + 1] > flags[firstReqIdx])
             {
                 firstReqIdx++;
             }
@@ -142,51 +144,72 @@ std::vector<IntegralType> extractMarkedElements(gsl::span<const IntegralType> so
  *
  * @param[in]  focusLeafCounts   node counts of the focus leaves, size N
  * @param[in]  haloFlags         flag for each node, with a non-zero value if present as halo node, size N
- * @param[in]  firstAssignedIdx  first focus leaf idx to treat as part of the assigned nodes on the executing rank
- * @param[in]  lastAssignedIdx   last focus leaf idx to treat as part of the assigned nodes on the executing rank
+ * @param[in]  idx               first and last focus leaf idx of the assigned nodes on the executing rank
  * @param[out] layout            length N+1. The first element is zero, the last element is
- *                               equal to the sum of all all present (assigned+halo) node counts.
+ *                               equal to the sum of all present (assigned+halo) node counts.
  */
-inline void computeNodeLayout(gsl::span<const unsigned> focusLeafCounts,
-                              gsl::span<const int> haloFlags,
-                              TreeNodeIndex firstAssignedIdx,
-                              TreeNodeIndex lastAssignedIdx,
-                              gsl::span<LocalIndex> layout)
+template<bool useGpu>
+void computeNodeLayout(std::span<const unsigned> focusLeafCounts,
+                       std::span<const uint8_t> haloFlags,
+                       TreeIndexPair idx,
+                       std::span<LocalIndex> layout)
 {
-#pragma omp parallel for
-    for (TreeNodeIndex i = 0; i < TreeNodeIndex(focusLeafCounts.size()); ++i)
+    if constexpr (useGpu)
     {
-        bool haveParticles = (firstAssignedIdx <= i && i < lastAssignedIdx) || haloFlags[i];
-        layout[i]          = -int(haveParticles) & focusLeafCounts[i];
+        memcpyD2D(focusLeafCounts.data() + idx.start(), idx.count(), layout.data() + idx.start());
+        selectCopyGpu(focusLeafCounts.data(), idx.start(), haloFlags.data(), layout.data());
+        selectCopyGpu(focusLeafCounts.data() + idx.end(), focusLeafCounts.size() - idx.end(),
+                      haloFlags.data() + idx.end(), layout.data() + idx.end());
+        exclusiveScanGpu(layout.data(), layout.data() + layout.size(), layout.data(), LocalIndex{0});
     }
-
-    exclusiveScan(layout.data(), layout.size());
+    else
+    {
+#pragma omp parallel for
+        for (TreeNodeIndex i = 0; i < TreeNodeIndex(focusLeafCounts.size()); ++i)
+        {
+            bool haveParticles = (idx.start() <= i && i < idx.end()) || haloFlags[i];
+            layout[i]          = -int(haveParticles) & focusLeafCounts[i];
+        }
+        std::exclusive_scan(layout.begin(), layout.end(), layout.begin(), LocalIndex{0});
+    }
 }
 
-/*! @brief computes a list which local array ranges are going to be filled with halo particles
- *
- * @param layout       prefix sum of leaf counts of locally present nodes (see computeNodeLayout)
- *                     length N+1
- * @param haloFlags    0 or 1 for each leaf, length N
- * @param assignment   assignment of leaf nodes to peer ranks
- * @param peerRanks    list of peer ranks
- * @return             list of array index ranges for the receiving part in exchangeHalos
- */
-inline auto computeHaloRecvList(gsl::span<const LocalIndex> layout,
-                                gsl::span<const int> haloFlags,
-                                gsl::span<const TreeIndexPair> assignment,
-                                gsl::span<const int> peerRanks)
+//! @brief check halo discovery for sanity
+template<class KeyType>
+int checkLayout(int myRank,
+               std::span<const TreeIndexPair> focusAssignment,
+               std::span<const LocalIndex> layout,
+               std::span<const KeyType> ftree)
 {
-    RecvList ret(assignment.size());
+    TreeNodeIndex firstNode = focusAssignment[myRank].start();
+    TreeNodeIndex lastNode  = focusAssignment[myRank].end();
 
-    for (int peer : peerRanks)
+    std::array<TreeNodeIndex, 2> checkRanges[2] = {{0, firstNode}, {lastNode, TreeNodeIndex(nNodes(ftree))}};
+
+    int ret = 0;
+    for (int range = 0; range < 2; ++range)
     {
-        auto pFlags           = haloFlags.subspan(assignment[peer].start(), assignment[peer].count());
-        TreeNodeIndex firstNz = std::distance(haloFlags.begin(), std::find(pFlags.begin(), pFlags.end(), 1));
-        TreeNodeIndex lastNz  = std::distance(haloFlags.begin(), std::find(pFlags.rbegin(), pFlags.rend(), 1).base());
-        ret[peer]             = {layout[firstNz], layout[lastNz]};
+#pragma omp parallel for
+        for (TreeNodeIndex i = checkRanges[range][0]; i < checkRanges[range][1]; ++i)
+        {
+            if (layout[i + 1] > layout[i])
+            {
+                bool peerFound = false;
+                for (auto peerRange : focusAssignment)
+                {
+                    if (peerRange.start() <= i && i < peerRange.end()) { peerFound = true; }
+                }
+                if (!peerFound)
+                {
+                    std::cout << "Assignment rank " << myRank << " " << std::oct << ftree[firstNode] << " - "
+                              << ftree[lastNode] << std::dec << std::endl;
+                    std::cout << "Failed node " << i << " " << std::oct << ftree[i] << " - " << ftree[i + 1] << std::dec
+                              << std::endl;
+                    ret = 1;
+                }
+            }
+        }
     }
-
     return ret;
 }
 
@@ -199,23 +222,21 @@ struct SmallerElementSize
 };
 
 //! @brief reorder with state-less function object
-template<class Gather, class... Arrays1, class... Arrays2>
-void gatherArrays(Gather&& gatherFunc,
-                  const LocalIndex* ordering,
-                  LocalIndex numElements,
-                  LocalIndex inputOffset,
+template<class... Arrays1, class... Arrays2>
+void gatherArrays(std::span<const LocalIndex> ordering,
                   LocalIndex outputOffset,
                   std::tuple<Arrays1&...> arrays,
                   std::tuple<Arrays2&...> scratchBuffers)
 {
-    auto reorderArray = [ordering, numElements, inputOffset, outputOffset, &gatherFunc, &scratchBuffers](auto& array)
+    auto reorderArray = [ordering, outputOffset, &scratchBuffers](auto& array)
     {
-        using VectorRef = decltype(array);
+        using VectorRef  = decltype(array);
+        using VectorType = std::decay_t<VectorRef>;
         if constexpr (util::Contains<VectorRef, std::tuple<Arrays2&...>>{})
         {
             auto& swapSpace = util::pickType<decltype(array)>(scratchBuffers);
             assert(swapSpace.size() == array.size());
-            gatherFunc(ordering, numElements, rawPtr(array) + inputOffset, rawPtr(swapSpace) + outputOffset);
+            gatherAcc<IsDeviceVector<VectorType>{}>(ordering, rawPtr(array), rawPtr(swapSpace) + outputOffset);
             swap(swapSpace, array);
         }
         else
@@ -224,14 +245,9 @@ void gatherArrays(Gather&& gatherFunc,
             static_assert(i < sizeof...(Arrays2));
             assert(std::get<i>(scratchBuffers).size() == array.size());
 
-            auto* scratchSpace =
-                reinterpret_cast<typename std::decay_t<VectorRef>::value_type*>(rawPtr(std::get<i>(scratchBuffers)));
-            gatherFunc(ordering, numElements, rawPtr(array) + inputOffset, scratchSpace);
-            if constexpr (IsDeviceVector<std::decay_t<VectorRef>>{})
-            {
-                memcpyD2D(scratchSpace, numElements, rawPtr(array) + outputOffset);
-            }
-            else { omp_copy(scratchSpace, scratchSpace + numElements, rawPtr(array) + outputOffset); }
+            auto* scratch = reinterpret_cast<typename VectorType::value_type*>(rawPtr(std::get<i>(scratchBuffers)));
+            gatherAcc<IsDeviceVector<VectorType>{}>(ordering, rawPtr(array), scratch);
+            copy_n<IsDeviceVector<VectorType>{}>(scratch, ordering.size(), rawPtr(array) + outputOffset);
         }
     };
 

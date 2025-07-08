@@ -1,26 +1,10 @@
 /*
- * MIT License
+ * Cornerstone octree
  *
- * Copyright (c) 2021 CSCS, ETH Zurich
- *               2021 University of Basel
+ * Copyright (c) 2024 CSCS, ETH Zurich
  *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
  */
 
 /*! @file
@@ -71,19 +55,16 @@ void reallocate(std::size_t size, double growthRate, Arrays&... arrays)
  * @param[in]    numBytes  minimum buffer size in bytes of @a vec
  * @return                 number of elements (vec.size(), not bytes) of supplied argument vector
  *
- * Note: previous content is destroyed
+ * Note: does not decrease the size of @p vec
  */
 template<class Vector>
-size_t reallocateBytes(Vector& vec, size_t numBytes, float growthRate)
+size_t reallocateBytes(Vector& vec, size_t numBytes, double growthRate)
 {
     constexpr size_t elementSize = sizeof(typename Vector::value_type);
     size_t originalSize          = vec.size();
 
     size_t currentSizeBytes = originalSize * elementSize;
-    if (currentSizeBytes < numBytes)
-    {
-        reallocateDestructive(vec, (numBytes + elementSize - 1) / elementSize, growthRate);
-    }
+    if (currentSizeBytes < numBytes) { reallocate(vec, (numBytes + elementSize - 1) / elementSize, growthRate); }
 
     return originalSize;
 }

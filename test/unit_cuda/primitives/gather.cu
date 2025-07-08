@@ -1,3 +1,11 @@
+/*
+ * Cornerstone octree
+ *
+ * Copyright (c) 2024 CSCS, ETH Zurich
+ *
+ * Please, refer to the LICENSE file in the root directory.
+ * SPDX-License-Identifier: MIT License
+ */
 
 /*! @file
  * @brief GPU SFC sorter unit tests
@@ -7,60 +15,32 @@
  */
 
 #include <vector>
-#include <thrust/device_vector.h>
-#include <thrust/sequence.h>
 
 #include "gtest/gtest.h"
 
-#include "cstone/cuda/thrust_util.cuh"
-#include "cstone/primitives/gather.cuh"
+#include <cstone/cuda/device_vector.h>
+#include "cstone/primitives/primitives_acc.hpp"
 
 using namespace cstone;
 
-TEST(SfcSorterGpu, shiftMapLeft)
+TEST(SortByKey, minimal)
 {
     using KeyType   = unsigned;
     using IndexType = unsigned;
-    using thrust::raw_pointer_cast;
 
-    thrust::device_vector<KeyType> keys = std::vector<KeyType>{2, 1, 5, 4};
+    DeviceVector<KeyType> keys = std::vector<KeyType>{2, 1, 5, 4};
+    DeviceVector<IndexType> obuf, keyBuf, valBuf;
 
-    thrust::device_vector<IndexType> obuf, keyBuf, valBuf;
-    GpuSfcSorter<IndexType, thrust::device_vector<unsigned>> sorter(obuf);
+    constexpr bool gpu = true;
 
-    sorter.setMapFromCodes(raw_pointer_cast(keys.data()), raw_pointer_cast(keys.data()) + keys.size(), keyBuf, valBuf);
-    // map is [1 0 3 2]
+    LocalIndex off = 1;
+    sequence<gpu>(off, keys.size(), obuf, 1.0);
+    sortByKey<gpu>(std::span{keys.data(), keys.size()}, std::span{obuf.data() + off, keys.size()}, keyBuf, valBuf, 1.0);
+    // map is [. 2 1 4 3]
 
+    sequence<gpu>(0, off, obuf, 1.0);
     {
-        thrust::device_vector<IndexType> ref = std::vector<IndexType>{1, 0, 3, 2};
-        EXPECT_EQ(obuf, ref);
-    }
-
-    sorter.extendMap(-1, keyBuf);
-
-    {
-        thrust::device_vector<IndexType> ref = std::vector<IndexType>{0, 2, 1, 4, 3};
-        EXPECT_EQ(obuf, ref);
-    }
-}
-
-TEST(SfcSorterGpu, shiftMapRight)
-{
-    using KeyType   = unsigned;
-    using IndexType = unsigned;
-    using thrust::raw_pointer_cast;
-
-    thrust::device_vector<KeyType> keys = std::vector<KeyType>{2, 1, 5, 4};
-
-    thrust::device_vector<IndexType> obuf, keyBuf, valBuf;
-    GpuSfcSorter<IndexType, thrust::device_vector<unsigned>> sorter(obuf);
-
-    sorter.setMapFromCodes(raw_pointer_cast(keys.data()), raw_pointer_cast(keys.data()) + keys.size(), keyBuf, valBuf);
-    // map is [1 0 3 2]
-
-    sorter.extendMap(1, keyBuf);
-    {
-        thrust::device_vector<IndexType> ref = std::vector<IndexType>{1, 0, 3, 2, 4};
+        DeviceVector ref = std::vector<IndexType>{0, 2, 1, 4, 3};
         EXPECT_EQ(obuf, ref);
     }
 }
